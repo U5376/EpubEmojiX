@@ -205,10 +205,16 @@ fn emoji_to_url_base(codepoint: &str) -> String {
 
 fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
     let mut result = String::new();
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
     for g in xhtml.graphemes(true) {
         if is_emoji_grapheme(g) {
             let codepoints: Vec<String> = g.chars().map(|c| format!("{:x}", c as u32)).collect();
             let filename = format!("{}.png", codepoints.join("-"));
+            let abs_path = exe_dir.join("emoji_img").join(&filename);
+            if !abs_path.exists() {
+                let url = emoji_to_url(g);
+                let _ = download_and_save(&url, &filename);
+            }
             let img_tag = format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>\n", g, imgdir, filename);
             result.push_str(&img_tag);
         } else {
