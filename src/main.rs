@@ -1,7 +1,6 @@
 use clap::Parser;
 use epub_emoji_x::replace_emoji_in_epub;
 use std::ffi::CString;
-use std::fs;
 
 /// 命令行参数
 #[derive(Parser)]
@@ -90,15 +89,14 @@ fn main() {
     let input_list = expand_input_list(&args.input);
     let output = &args.output;
     use std::path::Path;
-    use std::fs;
     if input_list.len() == 1 {
         let input = &input_list[0];
-        let meta = fs::metadata(input);
+        let meta = std::fs::metadata(input);
         if let Ok(meta) = meta {
             if meta.is_dir() {
                 // 目录批量模式
                 let mut found = false;
-                for entry in fs::read_dir(input).unwrap() {
+                for entry in std::fs::read_dir(input).unwrap() {
                     let entry = entry.unwrap();
                     let path = entry.path();
                     if path.extension().map(|e| e == "epub").unwrap_or(false) {
