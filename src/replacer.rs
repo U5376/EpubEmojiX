@@ -1,7 +1,6 @@
 use unicode_segmentation::UnicodeSegmentation;
 use epub::doc::EpubDoc;
 use base64::Engine;
-use unicode_emoji::is_emoji;
 use emojis;
 
 /// Twemoji CDN 基础 URL
@@ -55,12 +54,12 @@ pub fn replace_emoji_in_epub_impl(input_path: &str, output_path: &str) -> Result
                 if mime.contains("html") {
                     let orig_str = String::from_utf8_lossy(&orig);
                     let replaced = replace_emoji_in_xhtml(&orig_str);
-                    doc.replace_resource(id, replaced.as_bytes().to_vec());
+                    doc.set_data(id, replaced.as_bytes().to_vec());
                 }
             }
         }
     }
-    doc.write_epub(output_path).map_err(|e| format!("保存epub失败: {e:?}"))?;
+    doc.save(output_path).map_err(|e| format!("保存epub失败: {e:?}"))?;
     Ok(())
 }
 
