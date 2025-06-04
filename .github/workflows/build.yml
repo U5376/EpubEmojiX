@@ -9,10 +9,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: 安装 Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          override: true
       - name: 下载 upx
         run: |
           Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.1/upx-4.2.1-win64.zip" -OutFile "upx.zip"
