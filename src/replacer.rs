@@ -1,16 +1,15 @@
 use unicode_segmentation::UnicodeSegmentation;
 use epub::doc::EpubDoc;
 use base64::Engine;
+use unicode_emoji::is_emoji;
+use emojis;
 
 /// Twemoji CDN 基础 URL
 const TWEMOJI_BASE: &str = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/";
 
 /// 判断字符是否为 emoji（简化版）
-fn is_emoji(c: char) -> bool {
-    (c >= '\u{1F600}' && c <= '\u{1F64F}') || // 表情
-    (c >= '\u{1F300}' && c <= '\u{1F5FF}') || // 符号
-    (c >= '\u{1F680}' && c <= '\u{1F6FF}') || // 交通
-    (c >= '\u{2600}' && c <= '\u{26FF}')   // 杂项
+fn is_emoji_grapheme(g: &str) -> bool {
+    emojis::get(g).is_some()
 }
 
 /// 将 emoji 字符转为 twemoji 图片 url
@@ -33,7 +32,7 @@ fn download_and_base64(url: &str) -> Result<String, String> {
 fn replace_emoji_in_xhtml(xhtml: &str) -> String {
     let mut result = String::new();
     for g in xhtml.graphemes(true) {
-        if g.chars().all(is_emoji) {
+        if is_emoji_grapheme(g) {
             let url = emoji_to_url(g);
             let img_tag = match download_and_base64(&url) {
                 Ok(b64) => format!("<img alt=\"{}\" src=\"data:image/png;base64,{}\" style=\"height:1em;vertical-align:-0.1em\"/>", g, b64),
@@ -56,12 +55,12 @@ pub fn replace_emoji_in_epub_impl(input_path: &str, output_path: &str) -> Result
                 if mime.contains("html") {
                     let orig_str = String::from_utf8_lossy(&orig);
                     let replaced = replace_emoji_in_xhtml(&orig_str);
-                    doc.set_data(id, replaced.as_bytes().to_vec());
+                    doc.replace_resource(id, replaced.as_bytes().to_vec());
                 }
             }
         }
     }
-    doc.save(output_path).map_err(|e| format!("保存epub失败: {e:?}"))?;
+    doc.write_epub(output_path).map_err(|e| format!("保存epub失败: {e:?}"))?;
     Ok(())
 }
 
