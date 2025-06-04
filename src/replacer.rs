@@ -72,11 +72,8 @@ pub fn replace_emoji_in_epub_impl(
         }
     }
     // emoji_dir 设为 opf 同级 emoji_img
-    let emoji_dir = if opf_dir.is_empty() {
-        "emoji_img".to_string()
-    } else {
-        format!("{}/emoji_img", opf_dir)
-    };
+    let emoji_dir = "emoji_img".to_string();
+    let opf_dir = opf_path.as_ref().and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_string_lossy().to_string())).unwrap_or_else(|| "".to_string());
     // 先遍历所有文件，处理 xhtml/html
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).map_err(|e| e.to_string())?;
@@ -93,7 +90,15 @@ pub fn replace_emoji_in_epub_impl(
                         emoji_imgs.insert(filename);
                     }
                 }
-                let replaced = replace_emoji_in_xhtml_auto(&orig_str, &emoji_dir);
+                // 计算图片在 xhtml 中的相对路径（如 ../emoji_img/xxx.png）
+                let xhtml_dir = std::path::Path::new(&name).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+                let img_rel = if opf_dir.is_empty() {
+                    "../emoji_img".to_string()
+                } else {
+                    let x = pathdiff::diff_paths(&emoji_dir, std::path::Path::new(&xhtml_dir)).unwrap_or_else(|| std::path::PathBuf::from("../emoji_img"));
+                    x.to_string_lossy().to_string()
+                };
+                let replaced = replace_emoji_in_xhtml_with_imgdir(&orig_str, &img_rel);
                 buffer_map.push((name, replaced.into_bytes()));
                 continue;
             }
@@ -205,10 +210,27 @@ fn find_opf_path_from_container<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Opti
     None
 }
 
+// 新的 replace_emoji_in_xhtml_with_imgdir
+fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
+    let mut result = String::new();
+    for g in xhtml.graphemes(true) {
+        if is_emoji_grapheme(g) {
+            let codepoints: Vec<String> = g.chars().map(|c| format!("{:x}", c as u32)).collect();
+            let filename = format!("{}.png", codepoints.join("-"));
+            let img_tag = format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>", g, imgdir, filename);
+            result.push_str(&img_tag);
+        } else {
+            result.push_str(g);
+        }
+    }
+    result
+}
+
+// update_opf_manifest: href 只写 emoji_img/xxx.png，且格式化输出
 fn update_opf_manifest(opf_content: &str, emoji_imgs: &std::collections::HashSet<String>, emoji_dir: &str) -> String {
     let mut reader = Reader::from_str(opf_content);
     reader.trim_text(true);
-    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
     let mut buf: Vec<u8> = Vec::new();
     let mut in_manifest = false;
     let mut already_inserted = std::collections::HashSet::new();
@@ -224,6 +246,8 @@ fn update_opf_manifest(opf_content: &str, emoji_imgs: &std::collections::HashSet
                     let id = format!("emoji_{}", filename.replace(".", "_"));
                     if already_inserted.contains(&id) { continue; }
                     let href = format!("{}/{}", emoji_dir, filename);
+                    let href = href.trim_start_matches("./").trim_start_matches(".\\");
+                    let href = if href.starts_with("emoji_img/") { href.to_string() } else { format!("emoji_img/{}", filename) };
                     let mut elem = BytesStart::new("item");
                     elem.push_attribute(("id", id.as_str()));
                     elem.push_attribute(("href", href.as_str()));
