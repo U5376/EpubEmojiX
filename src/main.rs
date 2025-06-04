@@ -18,7 +18,7 @@ fn main() {
     let args = Args::parse();
     let input = CString::new(args.input).unwrap();
     let output = CString::new(args.output).unwrap();
-    let code = unsafe { replace_emoji_in_epub(input.as_ptr(), output.as_ptr()) };
+    let code = replace_emoji_in_epub(input.as_ptr(), output.as_ptr());
     if code == 0 {
         println!("处理完成");
     } else {

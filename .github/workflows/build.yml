@@ -19,14 +19,14 @@ jobs:
       - name: 构建 release
         run: cargo build --release
       - name: upx 压缩
-        run: .\upx-4.2.1-win64\upx.exe --best --lzma target\release\epub_emoji_x.exe
+        run: .\upx-4.2.1-win64\upx.exe --best --lzma target\release\epub_emoji_cli.exe
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: epub_emoji_x.exe
-          path: target/release/epub_emoji_x.exe
+          name: epub_emoji_cli.exe
+          path: target/release/epub_emoji_cli.exe
       - name: 发布 Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: target/release/epub_emoji_x.exe
+          files: target/release/epub_emoji_cli.exe

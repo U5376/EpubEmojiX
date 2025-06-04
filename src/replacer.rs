@@ -1,7 +1,6 @@
 use std::fs::File;
-use std::io::{Read, Write, Seek, SeekFrom, Cursor};
-use std::path::Path;
-use zip::{ZipArchive, ZipWriter, read::ZipFile, write::FileOptions};
+use std::io::{Read, Write};
+use zip::{ZipArchive, ZipWriter, write::FileOptions};
 use unicode_segmentation::UnicodeSegmentation;
 use base64::Engine;
 use emojis;
