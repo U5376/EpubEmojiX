@@ -1,9 +1,12 @@
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use zip::{ZipArchive, ZipWriter, write::FileOptions};
 use unicode_segmentation::UnicodeSegmentation;
-use base64::Engine;
 use emojis;
+use quick_xml::Reader;
+use quick_xml::events::{Event, BytesStart};
+use quick_xml::Writer;
+use std::io::Cursor;
 
 /// Twemoji CDN 基础 URL
 const TWEMOJI_BASE: &str = "https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/";
@@ -52,7 +55,28 @@ pub fn replace_emoji_in_epub_impl(
     let mut zip = ZipArchive::new(input_file).map_err(|e| e.to_string())?;
     let mut buffer_map = vec![];
     let mut emoji_imgs = HashSet::new();
-    let emoji_dir = "emoji_img";
+    let mut opf_path = None;
+    let mut opf_content = None;
+    let mut opf_dir = String::new();
+    // 查找 opf 路径
+    if let Some(path) = find_opf_path_from_container(&mut zip) {
+        opf_dir = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "".to_string());
+        opf_path = Some(path.clone());
+        if let Ok(mut opf_file) = zip.by_name(&path) {
+            let mut content = String::new();
+            opf_file.read_to_string(&mut content).ok();
+            opf_content = Some(content);
+        }
+    }
+    // emoji_dir 设为 opf 同级 emoji_img
+    let emoji_dir = if opf_dir.is_empty() {
+        "emoji_img".to_string()
+    } else {
+        format!("{}/emoji_img", opf_dir)
+    };
     // 先遍历所有文件，处理 xhtml/html
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).map_err(|e| e.to_string())?;
@@ -69,12 +93,19 @@ pub fn replace_emoji_in_epub_impl(
                         emoji_imgs.insert(filename);
                     }
                 }
-                let replaced = replace_emoji_in_xhtml_auto(&orig_str, emoji_dir);
+                let replaced = replace_emoji_in_xhtml_auto(&orig_str, &emoji_dir);
                 buffer_map.push((name, replaced.into_bytes()));
                 continue;
             }
         }
         buffer_map.push((name, buf));
+    }
+    // 更新 opf 清单
+    if let (Some(path), Some(content)) = (opf_path, opf_content) {
+        let new_opf = update_opf_manifest(&content, &emoji_imgs, &emoji_dir);
+        // 只保留新 opf，移除旧 opf
+        buffer_map.retain(|(n, _)| n != &path);
+        buffer_map.push((path, new_opf.into_bytes()));
     }
     // 写回新 epub
     let out_file = File::create(output_path).map_err(|e| e.to_string())?;
@@ -86,7 +117,10 @@ pub fn replace_emoji_in_epub_impl(
     }
     // 插入 emoji 图片资源
     for filename in emoji_imgs {
-        let img_path = format!("{}/{}", emoji_dir, filename);
+        let img_path = format!("{}{}{}",
+            if emoji_dir.is_empty() { "" } else { &emoji_dir },
+            if emoji_dir.is_empty() { "" } else { "/" },
+            filename);
         if let Ok(mut img_file) = File::open(&img_path) {
             let mut img_data = Vec::new();
             img_file.read_to_end(&mut img_data).map_err(|e| e.to_string())?;
@@ -102,17 +136,13 @@ pub fn replace_emoji_in_epub_impl(
 
 fn replace_emoji_in_xhtml_auto(xhtml: &str, emoji_dir: &str) -> String {
     use unicode_segmentation::UnicodeSegmentation;
-    use std::fs::File;
-    use std::io::Read;
-    use std::io::Write;
-    use std::path::Path;
     let mut result = String::new();
     for g in xhtml.graphemes(true) {
         if is_emoji_grapheme(g) {
             let codepoints: Vec<String> = g.chars().map(|c| format!("{:x}", c as u32)).collect();
             let filename = format!("{}.png", codepoints.join("-"));
             let img_path = format!("{}/{}", emoji_dir, filename);
-            let img_tag = if Path::new(&img_path).exists() {
+            let img_tag = if std::path::Path::new(&img_path).exists() {
                 format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>", g, emoji_dir, filename)
             } else {
                 // 下载图片并保存到本地
@@ -137,12 +167,97 @@ fn download_and_save(url: &str, path: &str) -> Result<(), String> {
     }
     let bytes = resp.bytes().map_err(|e| e.to_string())?;
     // 创建父目录
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let path_obj = std::path::Path::new(path);
+    if let Some(parent) = path_obj.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
     }
     let mut file = File::create(path).map_err(|e| e.to_string())?;
     file.write_all(&bytes).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn find_opf_path_from_container<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Option<String> {
+    let mut container_xml = String::new();
+    if let Ok(mut file) = zip.by_name("META-INF/container.xml") {
+        file.read_to_string(&mut container_xml).ok()?;
+        let mut reader = Reader::from_str(&container_xml);
+        reader.trim_text(true);
+        let mut buf: Vec<u8> = Vec::new();
+        while let Ok(event) = reader.read_event() {
+            match event {
+                Event::Empty(ref e) | Event::Start(ref e) => {
+                    if e.name().as_ref() == b"rootfile" {
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"full-path" {
+                                return Some(String::from_utf8_lossy(&attr.value).to_string());
+                            }
+                        }
+                    }
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+    }
+    None
+}
+
+fn update_opf_manifest(opf_content: &str, emoji_imgs: &std::collections::HashSet<String>, emoji_dir: &str) -> String {
+    let mut reader = Reader::from_str(opf_content);
+    reader.trim_text(true);
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    let mut buf: Vec<u8> = Vec::new();
+    let mut in_manifest = false;
+    let mut already_inserted = std::collections::HashSet::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref e)) if e.name().as_ref() == b"manifest" => {
+                in_manifest = true;
+                writer.write_event(Event::Start(e.clone())).unwrap();
+            }
+            Ok(Event::End(ref e)) if e.name().as_ref() == b"manifest" => {
+                // 在 </manifest> 前插入所有 emoji 图片
+                for filename in emoji_imgs {
+                    let id = format!("emoji_{}", filename.replace(".", "_"));
+                    if already_inserted.contains(&id) { continue; }
+                    let href = format!("{}/{}", emoji_dir, filename);
+                    let mut elem = BytesStart::new("item");
+                    elem.push_attribute(("id", id.as_str()));
+                    elem.push_attribute(("href", href.as_str()));
+                    elem.push_attribute(("media-type", "image/png"));
+                    writer.write_event(Event::Empty(elem)).unwrap();
+                    already_inserted.insert(id);
+                }
+                in_manifest = false;
+                writer.write_event(Event::End(e.clone())).unwrap();
+            }
+            Ok(Event::Eof) => break,
+            Ok(ev) => {
+                // 跳过已存在的 emoji_img/xx.png
+                if in_manifest {
+                    if let Event::Empty(ref e) = ev {
+                        let mut is_emoji_img = false;
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"href" && String::from_utf8_lossy(&attr.value).starts_with(emoji_dir) {
+                                is_emoji_img = true;
+                                break;
+                            }
+                        }
+                        if is_emoji_img {
+                            continue;
+                        }
+                    }
+                }
+                writer.write_event(ev).unwrap();
+            }
+            Err(_) => break,
+        }
+        buf.clear();
+    }
+    String::from_utf8(writer.into_inner().into_inner()).unwrap_or_else(|_| opf_content.to_string())
 }
 
 pub mod replacer {

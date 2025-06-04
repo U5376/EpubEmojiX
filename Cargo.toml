@@ -2,8 +2,8 @@
 name = "epub_emoji_x"
 version = "0.1.0"
 edition = "2021"
-description = "将epub内emoji全部替换为图片的工具，可独立运行和嵌入调用"
-authors = ["Your Name <your@email.com>"]
+description = "将epub内emoji全部替换为图片的工具，可独立运行和嵌入调用。支持本地/自动下载emoji图片，支持批量处理。"
+authors = ["你的名字 <your@email.com>"]
 license = "MIT"
 
 [lib]
@@ -14,10 +14,9 @@ crate-type = ["cdylib", "rlib"]
 zip = "0.6"
 unicode-segmentation = "1.11"
 reqwest = { version = "0.12", features = ["blocking"] }
-image = "0.25"
 clap = { version = "4.5", features = ["derive"] }
-base64 = "0.22"
 emojis = "0.6"
+quick-xml = "0.31"
 
 [profile.release]
 lto = true
@@ -26,5 +25,5 @@ codegen-units = 1
 opt-level = "z"
 
 [[bin]]
-name = "epub_emoji_cli"
+name = "EpubEmojiX"
 path = "src/main.rs"

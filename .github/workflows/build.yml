@@ -19,9 +19,9 @@ jobs:
       - name: 构建 release
         run: cargo build --release
       - name: upx 压缩
-        run: .\upx-4.2.1-win64\upx.exe --best --lzma target\release\epub_emoji_cli.exe
+        run: .\upx-4.2.1-win64\upx.exe --best --lzma target\release\EpubEmojiX.exe
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: epub_emoji_cli
-          path: target/release/epub_emoji_cli.exe
+          name: EpubEmojiX.exe
+          path: target/release/EpubEmojiX.exe

@@ -27,17 +27,12 @@ pub enum EmojiSourceMode {
 pub extern "C" fn replace_emoji_in_epub_with_mode(
     input_path: *const std::os::raw::c_char,
     output_path: *const std::os::raw::c_char,
-    emoji_source: u32, // 0: Local, 1: Online
-    emoji_dir: *const std::os::raw::c_char,
+    _emoji_source: u32, // 保留参数但不使用
+    _emoji_dir: *const std::os::raw::c_char, // 保留参数但不使用
 ) -> i32 {
     use std::ffi::CStr;
     let input = unsafe { CStr::from_ptr(input_path) }.to_string_lossy();
     let output = unsafe { CStr::from_ptr(output_path) }.to_string_lossy();
-    let emoji_dir = unsafe { CStr::from_ptr(emoji_dir) }.to_string_lossy();
-    let mode = match emoji_source {
-        1 => EmojiSourceMode::Online,
-        _ => EmojiSourceMode::Local,
-    };
     match crate::replacer::replace_emoji_in_epub_impl(&input, &output) {
         Ok(_) => 0,
         Err(_) => 1,

@@ -35,6 +35,57 @@ fn expand_input_list(inputs: &[String]) -> Vec<String> {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    // 拖拽或只输入 -i 文件时自动推导输出路径
+    if args.len() == 2 {
+        let input = &args[1];
+        let output = if input.ends_with(".epub") {
+            let stem = std::path::Path::new(input).file_stem().unwrap().to_string_lossy();
+            let parent = std::path::Path::new(input).parent().unwrap_or_else(|| std::path::Path::new("."));
+            format!("{}\\{}_out.epub", parent.display(), stem)
+        } else if input.starts_with('@') {
+            let outdir = std::path::Path::new(&input[1..]).parent().unwrap_or_else(|| std::path::Path::new("."));
+            format!("{}\\output", outdir.display())
+        } else if std::fs::metadata(input).map(|m| m.is_dir()).unwrap_or(false) {
+            format!("{}\\output", input)
+        } else {
+            format!("{}_out", input)
+        };
+        let input_c = CString::new(input.clone()).unwrap();
+        let output_c = CString::new(output.clone()).unwrap();
+        let code = replace_emoji_in_epub(input_c.as_ptr(), output_c.as_ptr());
+        if code == 0 {
+            println!("处理完成: {} -> {}", input, output);
+        } else {
+            eprintln!("处理失败，错误码: {}", code);
+        }
+        return;
+    }
+    // 兼容 -i 但无 -o 时，自动推导输出路径
+    if args.len() >= 3 && (args[1] == "-i" || args[1] == "--input") && !args.contains(&"-o".to_string()) && !args.contains(&"--output".to_string()) {
+        let input = &args[2];
+        let output = if input.ends_with(".epub") {
+            let stem = std::path::Path::new(input).file_stem().unwrap().to_string_lossy();
+            let parent = std::path::Path::new(input).parent().unwrap_or_else(|| std::path::Path::new("."));
+            format!("{}\\{}_out.epub", parent.display(), stem)
+        } else if input.starts_with('@') {
+            let outdir = std::path::Path::new(&input[1..]).parent().unwrap_or_else(|| std::path::Path::new("."));
+            format!("{}\\output", outdir.display())
+        } else if std::fs::metadata(input).map(|m| m.is_dir()).unwrap_or(false) {
+            format!("{}\\output", input)
+        } else {
+            format!("{}_out", input)
+        };
+        let input_c = CString::new(input.clone()).unwrap();
+        let output_c = CString::new(output.clone()).unwrap();
+        let code = replace_emoji_in_epub(input_c.as_ptr(), output_c.as_ptr());
+        if code == 0 {
+            println!("处理完成: {} -> {}", input, output);
+        } else {
+            eprintln!("处理失败，错误码: {}", code);
+        }
+        return;
+    }
     let args = Args::parse();
     let input_list = expand_input_list(&args.input);
     let output = &args.output;
