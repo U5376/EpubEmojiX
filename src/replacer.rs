@@ -100,7 +100,6 @@ pub fn replace_emoji_in_epub_impl(
     // 插入 emoji 图片资源
     let exe_dir = env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
     for filename in emoji_imgs {
-        let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
         let local_img_path = exe_dir.join("emoji_img").join(&filename);
         println!("[epub_emoji_x] 插入emoji图片: {}", local_img_path.display());
         if let Ok(mut img_file) = File::open(&local_img_path) {
@@ -149,20 +148,50 @@ fn download_and_save(url: &str, filename: &str) -> Result<(), String> {
     use std::path::Path;
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| Path::new(".").to_path_buf());
     let abs_path = exe_dir.join("emoji_img").join(filename);
-    println!("[epub_emoji_x] 下载emoji图片: {} -> {}", url, abs_path.display());
-    let resp = reqwest::blocking::get(url).map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("下载失败: {}", url));
-    }
-    let bytes = resp.bytes().map_err(|e| e.to_string())?;
-    if let Some(parent) = abs_path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    // 优先尝试不带 -fe0f 的图片
+    if let Some(stripped) = filename.strip_suffix("-fe0f.png") {
+        let fallback = exe_dir.join("emoji_img").join(format!("{}.png", stripped));
+        if fallback.exists() {
+            std::fs::copy(&fallback, &abs_path).map_err(|e| e.to_string())?;
+            println!("[epub_emoji_x] 使用无 -fe0f 变体图片: {} -> {}", fallback.display(), abs_path.display());
+            return Ok(());
         }
     }
-    let mut file = std::fs::File::create(&abs_path).map_err(|e| e.to_string())?;
-    file.write_all(&bytes).map_err(|e| e.to_string())?;
-    Ok(())
+    println!("[epub_emoji_x] 下载emoji图片: {} -> {}", url, abs_path.display());
+    if let Ok(resp) = reqwest::blocking::get(url) {
+        if resp.status().is_success() {
+            let bytes = resp.bytes().map_err(|e| e.to_string())?;
+            if let Some(parent) = abs_path.parent() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+            }
+            let mut file = std::fs::File::create(&abs_path).map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    if let Some(stripped) = filename.strip_suffix("-fe0f.png") {
+        let fallback_url = emoji_to_url_base(stripped);
+        let fallback_path = exe_dir.join("emoji_img").join(format!("{}.png", stripped));
+        println!("[epub_emoji_x] 尝试下载无 -fe0f 变体图片: {} -> {}", fallback_url, fallback_path.display());
+        if let Ok(resp) = reqwest::blocking::get(&fallback_url) {
+            if resp.status().is_success() {
+                let bytes = resp.bytes().map_err(|e| e.to_string())?;
+                if let Some(parent) = fallback_path.parent() {
+                    if !parent.exists() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                }
+                let mut file = std::fs::File::create(&fallback_path).map_err(|e| e.to_string())?;
+                file.write_all(&bytes).map_err(|e| e.to_string())?;
+                std::fs::copy(&fallback_path, &abs_path).map_err(|e| e.to_string())?;
+                println!("[epub_emoji_x] 下载并使用无 -fe0f 变体图片: {} -> {}", fallback_url, abs_path.display());
+                return Ok(());
+            }
+        }
+    }
+    Err(format!("下载失败: {}", url))
 }
 
 fn emoji_to_url(emoji: &str) -> String {
@@ -170,23 +199,17 @@ fn emoji_to_url(emoji: &str) -> String {
     format!("https://gcore.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{}.png", codepoints.join("-"))
 }
 
+fn emoji_to_url_base(codepoint: &str) -> String {
+    format!("https://gcore.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{}.png", codepoint)
+}
+
 fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
     let mut result = String::new();
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
     for g in xhtml.graphemes(true) {
         if is_emoji_grapheme(g) {
             let codepoints: Vec<String> = g.chars().map(|c| format!("{:x}", c as u32)).collect();
             let filename = format!("{}.png", codepoints.join("-"));
-            let abs_path = exe_dir.join("emoji_img").join(&filename);
-            let img_tag = if abs_path.exists() {
-                format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>", g, imgdir, filename)
-            } else {
-                let url = emoji_to_url(g);
-                match download_and_save(&url, &filename) {
-                    Ok(_) => format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>", g, imgdir, filename),
-                    Err(_) => g.to_string(),
-                }
-            };
+            let img_tag = format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>\n", g, imgdir, filename);
             result.push_str(&img_tag);
         } else {
             result.push_str(g);
