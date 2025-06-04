@@ -11,8 +11,7 @@ name = "epub_emoji_x"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-epub = "2.0"
-regex = "1.10"
+zip = "0.6"
 unicode-segmentation = "1.11"
 reqwest = { version = "0.12", features = ["blocking"] }
 image = "0.25"

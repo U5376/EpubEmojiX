@@ -1,5 +1,8 @@
+use std::fs::File;
+use std::io::{Read, Write, Seek, SeekFrom, Cursor};
+use std::path::Path;
+use zip::{ZipArchive, ZipWriter, read::ZipFile, write::FileOptions};
 use unicode_segmentation::UnicodeSegmentation;
-use epub::doc::EpubDoc;
 use base64::Engine;
 use emojis;
 
@@ -47,19 +50,33 @@ fn replace_emoji_in_xhtml(xhtml: &str) -> String {
 
 /// 替换 epub 文件中的 emoji 为图片
 pub fn replace_emoji_in_epub_impl(input_path: &str, output_path: &str) -> Result<(), String> {
-    let mut doc = EpubDoc::new(input_path).map_err(|e| format!("打开epub失败: {e:?}"))?;
-    for item in &doc.spine {
-        if let Some(id) = item.id.as_deref() {
-            if let Some((orig, mime)) = doc.get_resource(id) {
-                if mime.contains("html") {
-                    let orig_str = String::from_utf8_lossy(&orig);
-                    let replaced = replace_emoji_in_xhtml(&orig_str);
-                    doc.set_data(id, replaced.as_bytes().to_vec());
-                }
+    let input_file = File::open(input_path).map_err(|e| e.to_string())?;
+    let mut zip = ZipArchive::new(input_file).map_err(|e| e.to_string())?;
+    let mut buffer_map = vec![];
+    // 先遍历所有文件，处理 xhtml/html
+    for i in 0..zip.len() {
+        let mut file = zip.by_index(i).map_err(|e| e.to_string())?;
+        let name = file.name().to_string();
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        if name.ends_with(".xhtml") || name.ends_with(".html") {
+            if let Ok(orig_str) = String::from_utf8(buf.clone()) {
+                let replaced = replace_emoji_in_xhtml(&orig_str);
+                buffer_map.push((name, replaced.into_bytes()));
+                continue;
             }
         }
+        buffer_map.push((name, buf));
     }
-    doc.save(output_path).map_err(|e| format!("保存epub失败: {e:?}"))?;
+    // 写回新 epub
+    let out_file = File::create(output_path).map_err(|e| e.to_string())?;
+    let mut writer = ZipWriter::new(out_file);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, data) in buffer_map {
+        writer.start_file(name, options).map_err(|e| e.to_string())?;
+        writer.write_all(&data).map_err(|e| e.to_string())?;
+    }
+    writer.finish().map_err(|e| e.to_string())?;
     Ok(())
 }
 
