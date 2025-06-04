@@ -8,7 +8,7 @@ EpubEmojiX 是一个将 EPUB 电子书中的 emoji 字符自动替换为图片�
 2. **查找 OPF 路径**：解析 `META-INF/container.xml`，定位 OPF 文件（如 `OEBPS/content.opf`）。
 3. **遍历并处理 xhtml/html 文件**：
    - 仅对 `.xhtml` 和 `.html` 文件进行 emoji 替换。
-   - 检测每个 emoji 字符，生成对应图片文件名（如 `1f496.png`）。
+   - 检测每个 emoji 字符(基于emojis库来找emoji)，生成对应图片文件名（如 `1f496.png`）。
    - 检查 exe 所在目录下 `emoji_img/` 是否已有图片，无则自动从 Twemoji CDN 下载（gcore.jsdelivr.net），并保存到本地。
    - 替换 emoji 为 `<img ...>` 标签，图片路径为相对 OPF 的 `../emoji_img/xxx.png`。
    - 每个 `<img>` 标签后自动加换行（`\n`），避免图片黏连。

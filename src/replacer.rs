@@ -92,7 +92,7 @@ pub fn replace_emoji_in_epub_impl(
     println!("[epub_emoji_x] 写回新epub: {}", output_path);
     let out_file = File::create(output_path).map_err(|e| format!("创建输出文件失败: {}", e))?;
     let mut writer = ZipWriter::new(out_file);
-    let options = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, data) in &buffer_map {
         writer.start_file(name, options).map_err(|e| format!("写入zip文件失败: {}", e))?;
         writer.write_all(data).map_err(|e| format!("写入zip内容失败: {}", e))?;
