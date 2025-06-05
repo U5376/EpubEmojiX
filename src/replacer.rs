@@ -203,7 +203,7 @@ fn emoji_to_url_base(codepoint: &str) -> String {
     format!("https://gcore.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/{}.png", codepoint)
 }
 
-fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
+pub fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
     let mut result = String::new();
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
     for g in xhtml.graphemes(true) {
@@ -288,4 +288,5 @@ fn is_emoji_grapheme(g: &str) -> bool {
 
 pub mod replacer {
     pub use super::replace_emoji_in_epub_impl;
+    pub use super::replace_emoji_in_xhtml_with_imgdir;
 }

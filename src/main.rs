@@ -1,5 +1,5 @@
 use clap::Parser;
-use epub_emoji_x::replace_emoji_in_epub;
+use epubemojix::replace_emoji_in_epub;
 use std::ffi::CString;
 
 /// 命令行参数
@@ -12,6 +12,9 @@ struct Args {
     /// 输出目录（批量模式）或输出文件（单文件模式）
     #[arg(short = 'o', long = "output", required = true)]
     output: String,
+    /// 处理 html 或 xhtml 文件（直接替换，不打包为epub）
+    #[arg(long = "html", default_value_t = false, action = clap::ArgAction::SetTrue)]
+    html: bool,
 }
 
 fn expand_input_list(inputs: &[String]) -> Vec<String> {
@@ -89,6 +92,25 @@ fn main() {
     let input_list = expand_input_list(&args.input);
     let output = &args.output;
     use std::path::Path;
+
+    // 新增：处理 html/xhtml 文件
+    if args.html {
+        for (_, input) in input_list.iter().enumerate() {
+            let output_path = if input_list.len() == 1 {
+                output.clone()
+            } else {
+                // 多文件时输出到目录
+                let fname = Path::new(input).file_name().unwrap().to_string_lossy();
+                format!("{}\\{}", output, fname)
+            };
+            match replace_emoji_in_html_file(input, &output_path) {
+                Ok(_) => println!("处理完成: {} -> {}", input, output_path),
+                Err(e) => eprintln!("处理失败: {} -> {}，错误: {}", input, output_path, e),
+            }
+        }
+        return;
+    }
+
     if input_list.len() == 1 {
         let input = &input_list[0];
         let meta = std::fs::metadata(input);
@@ -154,4 +176,27 @@ fn main() {
             }
         }
     }
+}
+
+// 新增：处理 html/xhtml 文件的 emoji 替换
+fn replace_emoji_in_html_file(input_path: &str, output_path: &str) -> Result<(), String> {
+    use std::fs;
+    use std::path::Path;
+
+    let content = fs::read_to_string(input_path).map_err(|e| format!("读取文件失败: {}", e))?;
+    // 图片目录与输出文件同级 emoji_img
+    let _out_dir = Path::new(output_path).parent().unwrap_or_else(|| Path::new("."));
+    let imgdir = "emoji_img";
+    let imgdir_rel = imgdir; // 相对路径
+    let replaced = epubemojix::replacer::replace_emoji_in_xhtml_with_imgdir(&content, imgdir_rel);
+
+    // 确保 emoji_img 目录存在
+    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| Path::new(".").to_path_buf());
+    let emoji_img_dir = exe_dir.join(imgdir);
+    if !emoji_img_dir.exists() {
+        std::fs::create_dir_all(&emoji_img_dir).map_err(|e| format!("创建图片目录失败: {}", e))?;
+    }
+
+    fs::write(output_path, replaced).map_err(|e| format!("写入输出文件失败: {}", e))?;
+    Ok(())
 }

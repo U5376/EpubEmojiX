@@ -1,5 +1,5 @@
 [package]
-name = "epub_emoji_x"
+name = "epubemojix"
 version = "0.1.0"
 edition = "2021"
 description = "将epub内emoji全部替换为图片的工具，可独立运行和嵌入调用。支持本地/自动下载emoji图片，支持批量处理。"
@@ -7,7 +7,7 @@ authors = ["你的名字 <your@email.com>"]
 license = "MIT"
 
 [lib]
-name = "epub_emoji_x"
+name = "epubemojix"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
