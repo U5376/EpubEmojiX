@@ -102,9 +102,10 @@ pub fn replace_emoji_in_epub_impl(
                 for g in orig_str.graphemes(true) {
                     if is_emoji_grapheme(g) {
                         let code = g.chars()
-                            .map(|c| format!("{:X}", c as u32))
+                            .map(|c| format!("{:x}", c as u32)) // 改为小写
                             .collect::<Vec<_>>()
                             .join("-");
+                        let code = code.to_lowercase(); // 统一小写
                         *counts.entry(code.clone()).or_insert(0) += 1;
                         *global_counts.entry(code).or_insert(0) += 1;
                     }
@@ -139,7 +140,7 @@ pub fn replace_emoji_in_epub_impl(
                         name, total_file, detail_file
                     );
                     for code in counts.keys() {
-                        emoji_imgs.insert(format!("{}.png", code));
+                        emoji_imgs.insert(format!("{}.png", code.to_lowercase())); // 统一小写
                     }
                     // 真正替换并写入 buffer_map
                     let replaced = replace_emoji_in_xhtml_with_imgdir(&orig_str, &img_rel);
@@ -192,6 +193,7 @@ pub fn replace_emoji_in_epub_impl(
     // 插入 emoji 图片资源
     let exe_dir = env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
     for filename in emoji_imgs {
+        let filename = filename.to_lowercase(); // 统一小写
         let local_img_path = exe_dir.join("emoji_img").join(&filename);
         println!("[epub_emoji_x] 插入emoji图片文件: {}", local_img_path.display());
         if let Ok(mut img_file) = File::open(&local_img_path) {
@@ -238,8 +240,9 @@ fn find_opf_path_from_container<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Opti
 // 新的 replace_emoji_in_xhtml_with_imgdir
 fn download_and_save(url: &str, filename: &str) -> Result<(), String> {
     use std::path::Path;
+    let filename = filename.to_lowercase(); // 统一小写
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| Path::new(".").to_path_buf());
-    let abs_path = exe_dir.join("emoji_img").join(filename);
+    let abs_path = exe_dir.join("emoji_img").join(&filename);
     // 优先尝试不带 -fe0f 的图片
     if let Some(stripped) = filename.strip_suffix("-fe0f.png") {
         let fallback = exe_dir.join("emoji_img").join(format!("{}.png", stripped));
@@ -298,10 +301,11 @@ fn emoji_to_url_base(codepoint: &str) -> String {
 pub fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
     let mut result = String::new();
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let imgdir = imgdir.replace("\\", "/");
     for g in xhtml.graphemes(true) {
         if is_emoji_grapheme(g) {
             let codepoints: Vec<String> = g.chars().map(|c| format!("{:x}", c as u32)).collect();
-            let filename = format!("{}.png", codepoints.join("-"));
+            let filename = format!("{}.png", codepoints.join("-").to_lowercase()); // 统一小写
             let abs_path = exe_dir.join("emoji_img").join(&filename);
             if !abs_path.exists() {
                 let url = emoji_to_url(g);
@@ -333,6 +337,7 @@ fn update_opf_manifest(opf_content: &str, emoji_imgs: &std::collections::HashSet
             Ok(Event::End(ref e)) if e.name().as_ref() == b"manifest" => {
                 // 在 </manifest> 前插入所有 emoji 图片
                 for filename in emoji_imgs {
+                    let filename = filename.to_lowercase(); // 统一小写
                     let id = format!("emoji_{}", filename.replace(".", "_"));
                     if already_inserted.contains(&id) { continue; }
                     let href = format!("{}/{}", emoji_dir, filename);
