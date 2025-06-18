@@ -8,12 +8,15 @@ use quick_xml::Reader;
 use quick_xml::events::{Event, BytesStart};
 use quick_xml::Writer;
 use std::io::Cursor;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 /// 替换 epub 文件中的 emoji 为图片
 pub fn replace_emoji_in_epub_impl(
     input_path: &str,
     output_path: &str,
 ) -> Result<(), String> {
+    let mut global_counts: HashMap<String, usize> = HashMap::new();
     use std::collections::HashSet;
     println!("[epub_emoji_x] 打开输入文件: {}", input_path);
     let input_file = File::open(input_path).map_err(|e| format!("打开输入文件失败: {}", e))?;
@@ -25,10 +28,45 @@ pub fn replace_emoji_in_epub_impl(
     let mut opf_content = None;
     // 查找 opf 路径
     let mut opf_dir = String::new();
+    let mut nav_files = std::collections::HashSet::new();
     if let Some(path) = find_opf_path_from_container(&mut zip) {
         if let Ok(mut opf_file) = zip.by_name(&path) {
             let mut content = String::new();
             opf_file.read_to_string(&mut content).ok();
+            // 修正：解析 nav 文件名，拼接并规范化为 zip 内路径
+            {
+                let opf_dir_path = std::path::Path::new(&path).parent().unwrap_or_else(|| std::path::Path::new(""));
+                let mut reader = Reader::from_str(&content);
+                reader.trim_text(true);
+                let mut buf: Vec<u8> = Vec::new();
+                loop {
+                    match reader.read_event() {
+                        Ok(Event::Empty(ref e)) => {
+                            let mut is_nav = false;
+                            let mut href_val = None;
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"properties" && attr.value.as_ref() == b"nav" {
+                                    is_nav = true;
+                                }
+                                if attr.key.as_ref() == b"href" {
+                                    href_val = Some(String::from_utf8_lossy(&attr.value).to_string());
+                                }
+                            }
+                            if is_nav {
+                                if let Some(href) = href_val {
+                                    // 拼接成 zip 内部的完整路径并规范化
+                                    let nav_path = opf_dir_path.join(href).components().collect::<PathBuf>();
+                                    let nav_path_str = nav_path.to_string_lossy().replace("\\", "/");
+                                    nav_files.insert(nav_path_str);
+                                }
+                            }
+                        }
+                        Ok(Event::Eof) => break,
+                        _ => {}
+                    }
+                    buf.clear();
+                }
+            }
             opf_content = Some(content);
         }
         opf_dir = std::path::Path::new(&path)
@@ -43,43 +81,97 @@ pub fn replace_emoji_in_epub_impl(
     } else {
         format!("{}/emoji_img", opf_dir)
     };
-    // 先遍历所有文件，处理 xhtml/html
+
+    // 遍历所有文件，处理 xhtml/html
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).map_err(|e| format!("读取zip第{}个文件失败: {}", i, e))?;
         let name = file.name().to_string();
-        println!("[epub_emoji_x] 处理文件: {}", name);
         let mut buf = Vec::new();
         file.read_to_end(&mut buf).map_err(|e| format!("读取文件内容失败: {}", e))?;
+        // 修正：排除 nav 文件（路径规范化后比较）
+        let name_normalized = name.replace("\\", "/");
         if name.ends_with(".xhtml") || name.ends_with(".html") {
+            if nav_files.contains(&name_normalized) {
+                println!("[epub_emoji_x] 跳过nav文件: {}", name);
+                buffer_map.push((name.clone(), buf.clone()));
+                continue;
+            }
             if let Ok(orig_str) = String::from_utf8(buf.clone()) {
-                // 收集所有 emoji
+                // 先局部统计本文件的 emoji 数量
+                let mut counts: HashMap<String, usize> = HashMap::new();
                 for g in orig_str.graphemes(true) {
                     if is_emoji_grapheme(g) {
-                        let codepoints: Vec<String> = g.chars().map(|c| format!("{:x}", c as u32)).collect();
-                        let filename = format!("{}.png", codepoints.join("-"));
-                        emoji_imgs.insert(filename);
+                        let code = g.chars()
+                            .map(|c| format!("{:X}", c as u32))
+                            .collect::<Vec<_>>()
+                            .join("-");
+                        *counts.entry(code.clone()).or_insert(0) += 1;
+                        *global_counts.entry(code).or_insert(0) += 1;
                     }
                 }
-                let xhtml_dir = std::path::Path::new(&name).parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
-                let img_rel = if opf_dir.is_empty() {
-                    "../emoji_img".to_string()
+                // 仅当需要替换时，才计算路径 & 执行替换
+                if !counts.is_empty() {
+                    // 先算出这次文件的 img_rel
+                    let xhtml_dir = Path::new(&name)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let img_rel = if opf_dir.is_empty() {
+                        "../emoji_img".to_string()
+                    } else {
+                        pathdiff::diff_paths(
+                            Path::new(&emoji_dir),
+                            Path::new(&xhtml_dir),
+                        )
+                        .unwrap_or_else(|| PathBuf::from("../emoji_img"))
+                        .to_string_lossy()
+                        .to_string()
+                    };
+        
+                    // 打印日志 & 记录要插入的图片
+                    let total_file: usize = counts.values().sum();
+                    let detail_file = counts.iter()
+                        .map(|(code, &n)| format!("{}×{}", code, n))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!(
+                        "[epub_emoji_x] 文件={}，共替换 {} 个emoji： {}",
+                        name, total_file, detail_file
+                    );
+                    for code in counts.keys() {
+                        emoji_imgs.insert(format!("{}.png", code));
+                    }
+                    // 真正替换并写入 buffer_map
+                    let replaced = replace_emoji_in_xhtml_with_imgdir(&orig_str, &img_rel);
+                    buffer_map.push((name.clone(), replaced.into_bytes()));
                 } else {
-                    let x = pathdiff::diff_paths(
-                        std::path::Path::new(&emoji_dir),
-                        std::path::Path::new(&xhtml_dir)
-                    ).unwrap_or_else(|| std::path::PathBuf::from("../emoji_img"));
-                    x.to_string_lossy().to_string()
-                };
-                println!("[epub_emoji_x] 替换emoji: 文件={} 相对图片目录={}", name, img_rel);
-                let replaced = replace_emoji_in_xhtml_with_imgdir(&orig_str, &img_rel);
-                buffer_map.push((name, replaced.into_bytes()));
-                continue;
+                    // 如果没有 emoji，直接原样写回
+                    buffer_map.push((name.clone(), buf.clone()));
+                }
             } else {
+                // UTF-8 解码失败，也原样写回
                 println!("[epub_emoji_x] 文件utf8解码失败: {}", name);
+                buffer_map.push((name.clone(), buf.clone()));
             }
+            continue;
         }
-        // 非 xhtml/html 文件直接原样写回
-        buffer_map.push((name, buf));
+        // 非 .xhtml/.html 文件，原样写回
+        buffer_map.push((name.clone(), buf.clone()));
+    }
+    
+    // 在更新 OPF 清单前，打印全局汇总
+    if !global_counts.is_empty() {
+        let total_all: usize = global_counts.values().sum();
+        let distinct_count = global_counts.len();
+        let detail_all = global_counts
+            .iter()
+            .map(|(code, &n)| format!("{}×{}", code, n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!(
+            "[epub_emoji_x] 共替换 {} 个emoji，种类数 {}，详细：{}",
+            total_all, distinct_count, detail_all
+        );
     }
     // 更新 opf 清单
     if let (Some(path), Some(content)) = (opf_path, opf_content) {
@@ -89,7 +181,7 @@ pub fn replace_emoji_in_epub_impl(
         buffer_map.push((path, new_opf.into_bytes()));
     }
     // 写回新 epub
-    println!("[epub_emoji_x] 写回新epub: {}", output_path);
+    println!("[epub_emoji_x] 开始写回epub: {}", output_path);
     let out_file = File::create(output_path).map_err(|e| format!("创建输出文件失败: {}", e))?;
     let mut writer = ZipWriter::new(out_file);
     let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -101,7 +193,7 @@ pub fn replace_emoji_in_epub_impl(
     let exe_dir = env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::path::PathBuf::from("."));
     for filename in emoji_imgs {
         let local_img_path = exe_dir.join("emoji_img").join(&filename);
-        println!("[epub_emoji_x] 插入emoji图片: {}", local_img_path.display());
+        println!("[epub_emoji_x] 插入emoji图片文件: {}", local_img_path.display());
         if let Ok(mut img_file) = File::open(&local_img_path) {
             let mut img_data = Vec::new();
             img_file.read_to_end(&mut img_data).map_err(|e| e.to_string())?;
@@ -215,7 +307,7 @@ pub fn replace_emoji_in_xhtml_with_imgdir(xhtml: &str, imgdir: &str) -> String {
                 let url = emoji_to_url(g);
                 let _ = download_and_save(&url, &filename);
             }
-            let img_tag = format!("<img alt=\"{}\" src=\"{}/{}\" style=\"height:1em;vertical-align:-0.1em\"/>\n", g, imgdir, filename);
+            let img_tag = format!("\n<img alt=\"{}\" src=\"{}/{}\" style=\"height:1.3em\"/>\n", g, imgdir, filename);
             result.push_str(&img_tag);
         } else {
             result.push_str(g);
