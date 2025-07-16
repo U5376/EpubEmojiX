@@ -185,9 +185,15 @@ pub fn replace_emoji_in_epub_impl(
     println!("[epub_emoji_x] 开始写回epub: {}", output_path);
     let out_file = File::create(output_path).map_err(|e| format!("创建输出文件失败: {}", e))?;
     let mut writer = ZipWriter::new(out_file);
-    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options_deflated = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options_stored = FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    // 定义不压缩的文件类型
+    let no_compress_extensions = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".ico"];
     for (name, data) in &buffer_map {
-        writer.start_file(name, options).map_err(|e| format!("写入zip文件失败: {}", e))?;
+        let lower_name = name.to_lowercase();
+        let should_store = name == "mimetype" || no_compress_extensions.iter().any(|ext| lower_name.ends_with(ext));
+        let options = if should_store { &options_stored } else { &options_deflated };
+        writer.start_file(name, *options).map_err(|e| format!("写入zip文件失败: {}", e))?;
         writer.write_all(data).map_err(|e| format!("写入zip内容失败: {}", e))?;
     }
     // 插入 emoji 图片资源
@@ -199,7 +205,8 @@ pub fn replace_emoji_in_epub_impl(
         if let Ok(mut img_file) = File::open(&local_img_path) {
             let mut img_data = Vec::new();
             img_file.read_to_end(&mut img_data).map_err(|e| e.to_string())?;
-            writer.start_file(format!("{}/{}", emoji_dir, filename), options).map_err(|e| e.to_string())?;
+            // emoji图片使用Stored不进行压缩
+            writer.start_file(format!("{}/{}", emoji_dir, filename), options_stored).map_err(|e| e.to_string())?;
             writer.write_all(&img_data).map_err(|e| e.to_string())?;
         } else {
             println!("[epub_emoji_x] emoji图片文件不存在: {}", local_img_path.display());
